@@ -1,0 +1,3 @@
+const companyRoutes = require('./routes/company.routes');
+// ...
+app.use('/api/companies', companyRoutes); 
