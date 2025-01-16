@@ -104,43 +104,32 @@ class ApplicationService {
 
     async getUserApplications(userId, filters, pagination) {
         try {
-            const { 
-                companies,
-                sellers,
-                statuses,
-                dateStart,
-                dateEnd,
-                sumFrom,
-                sumTo,
-                search
-            } = filters;
-            // console.log('Received filters:', filters); // Для отладки
             const query = { user: new mongoose.Types.ObjectId(userId) };
 
-            // Добавляем поиск по разным полям
-            if (search) {
-                query.$or = [
-                    { 'company.name': { $regex: search, $options: 'i' } },
-                    { 'user.name': { $regex: search, $options: 'i' } },
-                    { 'seller.name': { $regex: search, $options: 'i' } }
-                ];
+            // Фильтрация по дате создания заявки
+            if (filters.dateStart || filters.dateEnd) {
+                query.createdAt = {};
+                if (filters.dateStart) {
+                    query.createdAt.$gte = new Date(filters.dateStart);
+                }
+                if (filters.dateEnd) {
+                    const endDate = new Date(filters.dateEnd);
+                    endDate.setHours(23, 59, 59, 999);
+                    query.createdAt.$lte = endDate;
+                }
             }
 
-            // Фильтр по компаниям
-            if (companies?.length && companies.some(id => id)) {
-                query['company'] = { $in: companies.filter(id => id).map(id => new mongoose.Types.ObjectId(id)) };
+            // Остальные фильтры
+            if (filters.companies?.length && filters.companies.some(id => id)) {
+                query['company'] = { $in: filters.companies.filter(id => id) };
             }
 
-            // Фильтр по продавцам
-            if (sellers?.length && sellers.some(id => id)) {
-                query['seller'] = { $in: sellers.filter(id => id).map(id => new mongoose.Types.ObjectId(id)) };
+            if (filters.sellers?.length && filters.sellers.some(id => id)) {
+                query['seller'] = { $in: filters.sellers.filter(id => id) };
             }
 
-            // Фильтр по статусам
-            if (statuses?.length && statuses.some(status => status)) {
-                query['status'] = { 
-                    $in: statuses.filter(status => status)
-                };
+            if (filters.statuses?.length && filters.statuses.some(status => status)) {
+                query.status = { $in: filters.statuses.filter(status => status) };
             }
 
             // Получаем заявки и чеки
@@ -157,7 +146,7 @@ class ApplicationService {
                 application: { $in: applicationIds }
             }).select('date application quantity pricePerUnit');
 
-            // Фильтруем заявки по датам чеков и суммам
+            // Фильтруем заявки только по суммам
             const filteredApplications = applications.filter(app => {
                 const appChecks = checks.filter(check => 
                     check.application.toString() === app._id.toString()
@@ -170,27 +159,9 @@ class ApplicationService {
                     sum + (check.quantity * check.pricePerUnit), 0
                 );
 
-                // Проверяем диапазон сумм
-                const isInSumRange = (
-                    (!sumFrom || totalAmount >= Number(sumFrom)) &&
-                    (!sumTo || totalAmount <= Number(sumTo))
-                );
-
-                // Проверяем диапазон дат
-                let isInDateRange = true;
-                if (dateStart || dateEnd) {
-                    const checkDates = appChecks.map(check => new Date(check.date));
-                    const appStartDate = new Date(Math.min(...checkDates));
-                    const appEndDate = new Date(Math.max(...checkDates));
-
-                    const filterStartDate = dateStart ? new Date(dateStart) : null;
-                    const filterEndDate = dateEnd ? new Date(dateEnd) : null;
-
-                    isInDateRange = (!filterStartDate || appEndDate >= filterStartDate) && 
-                                   (!filterEndDate || appStartDate <= filterEndDate);
-                }
-
-                return isInSumRange && isInDateRange;
+                // Проверяем только диапазон сумм
+                return (!filters.sumFrom || totalAmount >= Number(filters.sumFrom)) &&
+                       (!filters.sumTo || totalAmount <= Number(filters.sumTo));
             });
 
             // Применяем пагинацию после фильтрации
@@ -205,37 +176,25 @@ class ApplicationService {
                     check.application.toString() === app._id.toString()
                 );
                 
+                const enrichedApp = app.toJSON();
                 const checkDates = appChecks.map(check => new Date(check.date));
                 
-                return {
-                    id: app._id,
-                    status: app.status,
-                    company: {
-                        id: app.company._id,
-                        name: app.company.name,
-                        inn: app.company.inn
-                    },
-                    seller: {
-                        id: app.seller._id,
-                        name: app.seller.name,
-                        inn: app.seller.inn
-                    },
-                    checksCount: appChecks.length,
-                    totalAmount: appChecks.reduce((sum, check) => 
-                        sum + (check.quantity * check.pricePerUnit), 0
-                    ),
-                    date: {
-                        start: checkDates.length ? 
-                            checkDates.reduce((a, b) => a < b ? a : b).toISOString().split('T')[0] : null,
-                        end: checkDates.length ? 
-                            checkDates.reduce((a, b) => a > b ? a : b).toISOString().split('T')[0] : null
-                    },
-                    user: {
-                        _id: app.user,
-                        name: app.user.name,
-                        inn: app.user.inn
-                    }
+                enrichedApp.date = {
+                    start: checkDates.length ? 
+                        checkDates.reduce((a, b) => a < b ? a : b).toISOString().split('T')[0] : null,
+                    end: checkDates.length ? 
+                        checkDates.reduce((a, b) => a > b ? a : b).toISOString().split('T')[0] : null
                 };
+
+                enrichedApp.checksCount = appChecks.length;
+                enrichedApp.totalAmount = appChecks.reduce((sum, check) => 
+                    sum + (check.quantity * check.pricePerUnit), 0
+                );
+                
+                // Добавляем отформатированную дату создания
+                enrichedApp.createdAt = this.formatCreatedAt(app.createdAt);
+
+                return enrichedApp;
             });
 
             return {
@@ -359,7 +318,24 @@ class ApplicationService {
 
             // Изменяем логику фильтрации активных заявок
             if (activeOnly) {
-                query.status = { $not: { $all: ['us_paid'] } }; // Заявки, где нет статуса us_paid
+                query.status = { $not: { $all: ['us_paid'] } };
+            }
+
+            // Добавляем фильтрацию по дате создания заявки
+            if (dateStart || dateEnd) {
+                query.createdAt = {};
+                if (dateStart) {
+                    // Устанавливаем начало дня (00:00:00)
+                    const startDate = new Date(dateStart);
+                    startDate.setHours(0, 0, 0, 0);
+                    query.createdAt.$gte = startDate;
+                }
+                if (dateEnd) {
+                    // Устанавливаем конец дня (23:59:59.999)
+                    const endDate = new Date(dateEnd);
+                    endDate.setHours(23, 59, 59, 999);
+                    query.createdAt.$lte = endDate;
+                }
             }
 
             // Если есть фильтр по статусам, он должен переопределить фильтр activeOnly
@@ -408,7 +384,7 @@ class ApplicationService {
                 application: { $in: applicationIds }
             }).select('date application quantity pricePerUnit');
 
-            // Фильтруем заявки по датам чеков и суммам
+            // Фильтруем заявки только по суммам, убираем фильтрацию по датам чеков
             const filteredApplications = applications.filter(app => {
                 const appChecks = checks.filter(check => 
                     check.application.toString() === app._id.toString()
@@ -427,21 +403,7 @@ class ApplicationService {
                     (!sumTo || totalAmount <= Number(sumTo))
                 );
 
-                // Проверяем диапазон дат
-                let isInDateRange = true;
-                if (dateStart || dateEnd) {
-                    const checkDates = appChecks.map(check => new Date(check.date));
-                    const appStartDate = new Date(Math.min(...checkDates));
-                    const appEndDate = new Date(Math.max(...checkDates));
-
-                    const filterStartDate = dateStart ? new Date(dateStart) : null;
-                    const filterEndDate = dateEnd ? new Date(dateEnd) : null;
-
-                    isInDateRange = (!filterStartDate || appEndDate >= filterStartDate) && 
-                                   (!filterEndDate || appStartDate <= filterEndDate);
-                }
-
-                return isInSumRange && isInDateRange;
+                return isInSumRange;
             });
 
             // Применяем пагинацию после фильтрации
@@ -470,6 +432,9 @@ class ApplicationService {
                 enrichedApp.totalAmount = appChecks.reduce((sum, check) => 
                     sum + (check.quantity * check.pricePerUnit), 0
                 );
+                
+                // Добавляем отформатированную дату создания
+                enrichedApp.createdAt = this.formatCreatedAt(app.createdAt);
 
                 return enrichedApp;
             });
@@ -687,6 +652,7 @@ class ApplicationService {
                 start: checks.length ? this.formatDate(checks[checks.length - 1].date) : null,
                 end: checks.length ? this.formatDate(checks[0].date) : null
             },
+            createdAt: this.formatCreatedAt(application.createdAt),
             checksCount,
             totalAmount: totalAmount.toFixed(2),
             vat: vat.toFixed(2),
@@ -971,6 +937,16 @@ class ApplicationService {
             console.error('Error exporting applications:', error);
             throw error;
         }
+    }
+
+    // Добавим вспомогательную функцию для форматирования даты
+    formatCreatedAt(date) {
+        if (!date) return null;
+        const d = new Date(date);
+        const day = d.getDate().toString().padStart(2, '0');
+        const month = (d.getMonth() + 1).toString().padStart(2, '0');
+        const year = d.getFullYear();
+        return `${day}/${month}/${year}`;
     }
 }
 
