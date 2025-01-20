@@ -60,7 +60,7 @@ class AdminService {
   }
 
   static async updateAdmin(adminId, adminData, requestingAdmin) {
-    const requestingAdminDoc = await Admin.findById(requestingAdmin.adminId);
+    const requestingAdminDoc = await Admin.findById(requestingAdmin.userId);
     if (!requestingAdminDoc) {
       throw new Error('Запрашивающий администратор не найден');
     }
