@@ -203,7 +203,7 @@ router.put('/:id', adminAuth, async (req, res, next) => {
             userId: req.user.userId,
             data: req.body.data
         });
-
+        console.log(req.body.data.checksToAdd, 123)
         const result = await applicationService.updateApplication(
             req.params.id,
             req.user.userId,

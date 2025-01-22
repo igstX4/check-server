@@ -234,13 +234,20 @@ class ApplicationService {
     
             // Обрабатываем добавление новых чеков
             if (data.checksToAdd && data.checksToAdd.length > 0) {
-                const newChecks = data.checksToAdd.map(check => ({
-                    ...check,
-                    application: applicationId,
-                    date: new Date(check.date),
-                    createdAt: new Date(),
-                    updatedAt: new Date()
-                }));
+                const newChecks = data.checksToAdd.map(check => {
+                    // Преобразуем дату из формата DD/MM/YY в YYYY-MM-DD
+                    const [day, month, year] = check.date.split('/');
+                    const fullYear = year.length === 2 ? `20${year}` : year;
+                    const formattedDate = `${fullYear}-${month}-${day}`;
+
+                    return {
+                        ...check,
+                        application: applicationId,
+                        date: new Date(formattedDate), // теперь дата будет корректно преобразована
+                        createdAt: new Date(),
+                        updatedAt: new Date()
+                    };
+                });
     
                 await Check.insertMany(newChecks);
             }
