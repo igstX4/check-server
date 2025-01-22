@@ -32,9 +32,9 @@ class CommentService {
         });
     }
 
-    async addComment(applicationId, authorId, authorType, text, file) {
+    async addComment(applicationId, authorId, authorType, text = " ", file) {
         let fileData = null;
-
+        console.log(text, 'text')
         if (file) {
             const uploadDir = path.join(__dirname, '../uploads');
             await fs.mkdir(uploadDir, { recursive: true });

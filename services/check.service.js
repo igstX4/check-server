@@ -115,6 +115,7 @@ class CheckService {
                     totalPrice: 1,
                     vat: 1,
                     application: {
+                        user: '$applicationData.user',
                         _id: '$applicationData._id',
                         company: '$companyData',
                         seller: '$sellerData',
