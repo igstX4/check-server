@@ -2,6 +2,8 @@ const Company = require('../models/company.model');
 const Application = require('../models/application.model');
 const Check = require('../models/check.model');
 const mongoose = require('mongoose');
+const Seller = require('../models/seller.model');
+const User = require('../models/user.model');
 
 class CompanyService {
     async getCompanies({ page, limit, search }) {
@@ -160,15 +162,66 @@ class CompanyService {
 
     async getCompanyApplications(companyId, filters, pagination) {
         try {
-            console.log('Received filters:', filters); // Для отладки
-
             const matchStage = { 
                 company: new mongoose.Types.ObjectId(companyId) 
             };
 
-            // Фильтр по статусам (изменили проверку)
+            // Добавляем поиск по разным полям
+            if (filters.search) {
+                // Получаем все компании, которые соответствуют поисковому запросу
+                const matchingCompanies = await Company.find({
+                    $or: [
+                        { name: { $regex: filters.search, $options: 'i' } },
+                        { inn: { $regex: filters.search, $options: 'i' } }
+                    ]
+                }).select('_id');
+
+                const companyIds = matchingCompanies.map(c => c._id);
+
+                // Получаем всех продавцов, которые соответствуют поисковому запросу
+                const matchingSellers = await Seller.find({
+                    $or: [
+                        { name: { $regex: filters.search, $options: 'i' } },
+                        { inn: { $regex: filters.search, $options: 'i' } }
+                    ]
+                }).select('_id');
+
+                const sellerIds = matchingSellers.map(s => s._id);
+
+                // Получаем всех пользователей, которые соответствуют поисковому запросу
+                const matchingUsers = await User.find({
+                    $or: [
+                        { name: { $regex: filters.search, $options: 'i' } },
+                        { inn: { $regex: filters.search, $options: 'i' } }
+                    ]
+                }).select('_id');
+
+                const userIds = matchingUsers.map(u => u._id);
+
+                // Объединяем все условия поиска
+                matchStage.$or = [
+                    { company: { $in: companyIds } },
+                    { seller: { $in: sellerIds } },
+                    { user: { $in: userIds } }
+                ];
+            }
+
+            // Фильтр по клиентам (исправляем название поля)
+            if (Array.isArray(filters.clients) && filters.clients.length > 0) {
+                const validClientIds = filters.clients
+                    .filter(id => mongoose.Types.ObjectId.isValid(id))
+                    .map(id => new mongoose.Types.ObjectId(id));
+                
+                if (validClientIds.length) {
+                    matchStage.user = { $in: validClientIds };
+                }
+            }
+
+            // Фильтр по статусам (исправляем логику)
             if (Array.isArray(filters.statuses) && filters.statuses.length > 0) {
-                matchStage.statuses = { $in: filters.statuses };
+                matchStage.status = { 
+                    $in: filters.statuses.filter(Boolean)
+                };
             }
 
             // Фильтр по продавцам
@@ -182,18 +235,7 @@ class CompanyService {
                 }
             }
 
-            // Фильтр по пользователям
-            if (Array.isArray(filters.users) && filters.users.length > 0) {
-                const validUserIds = filters.users
-                    .filter(id => mongoose.Types.ObjectId.isValid(id))
-                    .map(id => new mongoose.Types.ObjectId(id));
-                
-                if (validUserIds.length) {
-                    matchStage.user = { $in: validUserIds };
-                }
-            }
-
-            // Фильтр по датам (изменили логику)
+            // Фильтр по датам
             if (filters.dateStart || filters.dateEnd) {
                 const dateMatch = {};
                 if (filters.dateStart) {
@@ -209,7 +251,7 @@ class CompanyService {
                 }
             }
 
-            console.log('Match stage:', JSON.stringify(matchStage, null, 2)); // Для отладки
+            console.log('Match stage:', JSON.stringify(matchStage, null, 2));
 
             const pipeline = [
                 { $match: matchStage },
@@ -284,7 +326,7 @@ class CompanyService {
                 }
             ];
 
-            // Фильтр по сумме
+            // Фильтр по сумме (перемещаем после вычисления totalAmount)
             if (filters.sumFrom || filters.sumTo) {
                 const sumMatch = {};
                 if (filters.sumFrom) {
@@ -312,7 +354,7 @@ class CompanyService {
                 ])
             ]);
 
-            console.log('Found applications:', applications.length); // Для отладки
+            console.log('Found applications:', applications.length);
 
             return {
                 applications,

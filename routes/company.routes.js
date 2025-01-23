@@ -28,6 +28,7 @@ router.get('/:id', adminAuth, async (req, res, next) => {
 router.get('/:id/applications', adminAuth, async (req, res, next) => {
     try {
         const filters = {
+            clients: req.query.clients?.split(','),
             dateStart: req.query.dateStart,
             dateEnd: req.query.dateEnd,
             statuses: req.query.statuses?.split(','),

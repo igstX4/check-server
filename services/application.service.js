@@ -106,6 +106,35 @@ class ApplicationService {
         try {
             const query = { user: new mongoose.Types.ObjectId(userId) };
 
+            // Добавляем поиск по разным полям
+            if (filters.search) {
+                // Получаем все компании, которые соответствуют поисковому запросу
+                const matchingCompanies = await Company.find({
+                    $or: [
+                        { name: { $regex: filters.search, $options: 'i' } },
+                        { inn: { $regex: filters.search, $options: 'i' } }
+                    ]
+                }).select('_id');
+
+                const companyIds = matchingCompanies.map(c => c._id);
+
+                // Получаем всех продавцов, которые соответствуют поисковому запросу
+                const matchingSellers = await Seller.find({
+                    $or: [
+                        { name: { $regex: filters.search, $options: 'i' } },
+                        { inn: { $regex: filters.search, $options: 'i' } }
+                    ]
+                }).select('_id');
+
+                const sellerIds = matchingSellers.map(s => s._id);
+
+                // Объединяем все условия поиска
+                query.$or = [
+                    { company: { $in: companyIds } },
+                    { seller: { $in: sellerIds } }
+                ];
+            }
+
             // Фильтрация по дате создания заявки
             if (filters.dateStart || filters.dateEnd) {
                 query.createdAt = {};
@@ -308,20 +337,47 @@ class ApplicationService {
 
     async getApplications(filters, pagination, activeOnly = false) {
         try {
-            const { 
-                clients,
-                companies,
-                sellers,
-                statuses,
-                dateStart,
-                dateEnd,
-                sumFrom,
-                sumTo,
-                search
-            } = filters;
-
-            console.log('Received filters:', filters);
             const query = {};
+
+            // Добавляем поиск по разным полям
+            if (filters.search) {
+                // Получаем все компании, которые соответствуют поисковому запросу
+                const matchingCompanies = await Company.find({
+                    $or: [
+                        { name: { $regex: filters.search, $options: 'i' } },
+                        { inn: { $regex: filters.search, $options: 'i' } }
+                    ]
+                }).select('_id');
+
+                const companyIds = matchingCompanies.map(c => c._id);
+
+                // Получаем всех продавцов, которые соответствуют поисковому запросу
+                const matchingSellers = await Seller.find({
+                    $or: [
+                        { name: { $regex: filters.search, $options: 'i' } },
+                        { inn: { $regex: filters.search, $options: 'i' } }
+                    ]
+                }).select('_id');
+
+                const sellerIds = matchingSellers.map(s => s._id);
+
+                // Получаем всех пользователей, которые соответствуют поисковому запросу
+                const matchingUsers = await User.find({
+                    $or: [
+                        { name: { $regex: filters.search, $options: 'i' } },
+                        { inn: { $regex: filters.search, $options: 'i' } }
+                    ]
+                }).select('_id');
+
+                const userIds = matchingUsers.map(u => u._id);
+
+                // Объединяем все условия поиска
+                query.$or = [
+                    { company: { $in: companyIds } },
+                    { seller: { $in: sellerIds } },
+                    { user: { $in: userIds } }
+                ];
+            }
 
             // Изменяем логику фильтрации активных заявок
             if (activeOnly) {
@@ -329,51 +385,42 @@ class ApplicationService {
             }
 
             // Добавляем фильтрацию по дате создания заявки
-            if (dateStart || dateEnd) {
+            if (filters.dateStart || filters.dateEnd) {
                 query.createdAt = {};
-                if (dateStart) {
+                if (filters.dateStart) {
                     // Устанавливаем начало дня (00:00:00)
-                    const startDate = new Date(dateStart);
+                    const startDate = new Date(filters.dateStart);
                     startDate.setHours(0, 0, 0, 0);
                     query.createdAt.$gte = startDate;
                 }
-                if (dateEnd) {
+                if (filters.dateEnd) {
                     // Устанавливаем конец дня (23:59:59.999)
-                    const endDate = new Date(dateEnd);
+                    const endDate = new Date(filters.dateEnd);
                     endDate.setHours(23, 59, 59, 999);
                     query.createdAt.$lte = endDate;
                 }
             }
 
             // Если есть фильтр по статусам, он должен переопределить фильтр activeOnly
-            if (statuses?.length && statuses.some(status => status)) {
+            if (filters.statuses?.length && filters.statuses.some(status => status)) {
                 query.status = { 
-                    $in: statuses.filter(status => status)
+                    $in: filters.statuses.filter(status => status)
                 };
             }
 
-            // Добавляем поиск по разным полям
-            if (search) {
-                query.$or = [
-                    { 'company.name': { $regex: search, $options: 'i' } },
-                    { 'user.name': { $regex: search, $options: 'i' } },
-                    { 'seller.name': { $regex: search, $options: 'i' } }
-                ];
-            }
-
             // Фильтр по клиентам
-            if (clients?.length && clients.some(id => id)) {
-                query['user'] = { $in: clients.filter(id => id) };
+            if (filters.clients?.length && filters.clients.some(id => id)) {
+                query['user'] = { $in: filters.clients.filter(id => id) };
             }
 
             // Фильтр по компаниям
-            if (companies?.length && companies.some(id => id)) {
-                query['company'] = { $in: companies.filter(id => id) };
+            if (filters.companies?.length && filters.companies.some(id => id)) {
+                query['company'] = { $in: filters.companies.filter(id => id) };
             }
 
             // Фильтр по продавцам
-            if (sellers?.length && sellers.some(id => id)) {
-                query['seller'] = { $in: sellers.filter(id => id) };
+            if (filters.sellers?.length && filters.sellers.some(id => id)) {
+                query['seller'] = { $in: filters.sellers.filter(id => id) };
             }
 
             // Получаем заявки и чеки
@@ -406,8 +453,8 @@ class ApplicationService {
 
                 // Проверяем диапазон сумм
                 const isInSumRange = (
-                    (!sumFrom || totalAmount >= Number(sumFrom)) &&
-                    (!sumTo || totalAmount <= Number(sumTo))
+                    (!filters.sumFrom || totalAmount >= Number(filters.sumFrom)) &&
+                    (!filters.sumTo || totalAmount <= Number(filters.sumTo))
                 );
 
                 return isInSumRange;
