@@ -116,6 +116,7 @@ class CheckService {
                     vat: 1,
                     checkNumber: 1,
                     application: {
+                        applicationNumber: '$applicationData.applicationNumber',
                         user: '$applicationData.user',
                         _id: '$applicationData._id',
                         company: '$companyData',
@@ -296,10 +297,10 @@ class CheckService {
             pipeline.push({ $sort: { date: -1 } });
 
             const checks = await Check.aggregate(pipeline);
-
+            console.log(checks, 123);
             const formattedData = checks.map(check => ({
                 id: check._id,
-                checkNumber: check.checkNumber,
+                checkNumber: check.applicationData.applicationNumber,
                 date: new Date(check.date).toLocaleDateString('ru-RU'),
                 company: check.companyData.name,
                 seller: check.sellerData.name,
