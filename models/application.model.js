@@ -1,6 +1,18 @@
 const mongoose = require('mongoose');
 
+// Создаем схему для автоинкремента
+const counterSchema = new mongoose.Schema({
+    _id: { type: String, required: true },
+    seq: { type: Number, default: 0 }
+});
+
+const Counter = mongoose.model('Counter', counterSchema);
+
 const applicationSchema = new mongoose.Schema({
+    applicationNumber: {
+        type: Number,
+        unique: true
+    },
     user: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
@@ -77,10 +89,28 @@ const applicationSchema = new mongoose.Schema({
     }]
 });
 
-// Преобразование для ответа
+// Добавляем pre-save middleware для автоинкремента
+applicationSchema.pre('save', async function(next) {
+    if (this.isNew) {
+        try {
+            const counter = await Counter.findByIdAndUpdate(
+                { _id: 'applicationNumber' },
+                { $inc: { seq: 1 } },
+                { new: true, upsert: true }
+            );
+            this.applicationNumber = counter.seq;
+        } catch (error) {
+            return next(error);
+        }
+    }
+    next();
+});
+
+// Обновляем преобразование для ответа
 applicationSchema.set('toJSON', {
     transform: function(doc, ret) {
-        ret.id = ret._id;
+        ret.id = ret._id; // Оставляем MongoDB ID
+        ret.applicationNumber = ret.applicationNumber; // Добавляем номер заявки
         delete ret._id;
         delete ret.__v;
         ret.createdAt = ret.createdAt.toISOString();

@@ -114,6 +114,7 @@ class CheckService {
                     unit: 1,
                     totalPrice: 1,
                     vat: 1,
+                    checkNumber: 1,
                     application: {
                         user: '$applicationData.user',
                         _id: '$applicationData._id',
@@ -298,6 +299,7 @@ class CheckService {
 
             const formattedData = checks.map(check => ({
                 id: check._id,
+                checkNumber: check.checkNumber,
                 date: new Date(check.date).toLocaleDateString('ru-RU'),
                 company: check.companyData.name,
                 seller: check.sellerData.name,

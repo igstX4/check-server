@@ -666,60 +666,81 @@ class ApplicationService {
     }
 
     async getApplicationDetails(applicationId) {
-        // Получаем заявку с populated полями
-        const application = await Application.findById(applicationId)
-            .populate('seller')
-            .populate('company')
-            .populate('user');
+        try {
+            const application = await Application.findById(applicationId)
+                .select('applicationNumber status commission totalAmount checksCount createdAt history')
+                .populate('user', 'name inn')
+                .populate('company', 'name inn')
+                .populate('seller', 'name inn type')
+                .populate({
+                    path: 'history',
+                    populate: {
+                        path: 'admin',
+                        select: 'name'
+                    }
+                });
 
-        if (!application) {
-            throw new Error('Заявка не найдена');
-        }
+            if (!application) {
+                throw new Error('Заявка не найдена');
+            }
 
-        // Отдельно получаем чеки для этой заявки
-        const checks = await Check.find({ application: applicationId })
-            .sort({ createdAt: -1 });
+            const checks = await Check.find({ application: applicationId })
+                .sort({ date: 1 });
 
-        const checksCount = checks.length;
-        const totalAmount = checks.reduce((sum, check) => sum + (check.quantity * check.pricePerUnit), 0);
-        const vat = totalAmount * 0.2;
-
-        return {
-            id: application._id,
-            status: application.status,
-            seller: application.seller ? {
-                id: application.seller._id,
-                name: application.seller.name,
-                inn: application.seller.inn
-            } : null,
-            company: application.company ? {
-                id: application.company._id,
-                name: application.company.name,
-                inn: application.company.inn
-            } : null,
-            user: application.user ? {
-                id: application.user._id,
-                name: application.user.name
-            } : null,
-            commission: application.commission,
-            dates: {
-                start: checks.length ? this.formatDate(checks[checks.length - 1].date) : null,
-                end: checks.length ? this.formatDate(checks[0].date) : null
-            },
-            createdAt: this.formatCreatedAt(application.createdAt),
-            checksCount,
-            totalAmount: totalAmount.toFixed(2),
-            vat: vat.toFixed(2),
-            checks: checks.map(check => ({
+            // Форматируем чеки
+            const formattedChecks = checks.map(check => ({
                 id: check._id,
+                checkNumber: check.checkNumber,
                 date: this.formatDate(check.date),
                 product: check.product,
                 quantity: check.quantity,
                 pricePerUnit: check.pricePerUnit,
                 unit: check.unit,
                 totalPrice: check.quantity * check.pricePerUnit
-            }))
-        };
+            }));
+
+            // Вычисляем даты из чеков
+            const dates = {
+                start: formattedChecks.length ? this.formatDate(checks[0].date) : null,
+                end: formattedChecks.length ? this.formatDate(checks[checks.length - 1].date) : null
+            };
+
+            // Вычисляем VAT
+            const vat = application.totalAmount * 0.2;
+
+            return {
+                id: application._id,
+                applicationNumber: application.applicationNumber,
+                status: application.status,
+                seller: application.seller ? {
+                    id: application.seller._id,
+                    name: application.seller.name,
+                    inn: application.seller.inn,
+                    type: application.seller.type
+                } : null,
+                company: application.company ? {
+                    id: application.company._id,
+                    name: application.company.name,
+                    inn: application.company.inn
+                } : null,
+                user: application.user ? {
+                    id: application.user._id,
+                    name: application.user.name,
+                    inn: application.user.inn
+                } : null,
+                commission: application.formattedCommission,
+                dates,
+                createdAt: this.formatCreatedAt(application.createdAt),
+                checksCount: application.checksCount,
+                totalAmount: application.totalAmount.toFixed(2),
+                vat: vat.toFixed(2),
+                history: application.history,
+                checks: formattedChecks
+            };
+        } catch (error) {
+            console.error('Error in getApplicationDetails:', error);
+            throw error;
+        }
     }
 
     async updateApplicationStatus(applicationId, status, adminId) {
@@ -899,39 +920,11 @@ class ApplicationService {
 
     async getApplicationsForExport(filters) {
         try {
-            const query = {};
-
-            if (filters.clients?.length) {
-                query.user = { $in: filters.clients };
-            }
-
-            if (filters.companies?.length) {
-                query.company = { $in: filters.companies };
-            }
-
-            if (filters.sellers?.length) {
-                query.seller = { $in: filters.sellers };
-            }
-
-            if (filters.statuses?.length) {
-                query.status = { $in: filters.statuses };
-            }
-
-            if (filters.dateStart || filters.dateEnd) {
-                query.createdAt = {};
-                if (filters.dateStart) {
-                    query.createdAt.$gte = new Date(filters.dateStart);
-                }
-                if (filters.dateEnd) {
-                    query.createdAt.$lte = new Date(filters.dateEnd);
-                }
-            }
-
-            // Получаем заявки
-            const applications = await Application.find(query)
-                .populate('user', 'name')
+            const applications = await Application.find(this.buildFilterQuery(filters))
+                .select('applicationNumber status company seller user createdAt')
                 .populate('company', 'name')
                 .populate('seller', 'name')
+                .populate('user', 'name')
                 .sort({ createdAt: -1 });
 
             // Получаем ID всех заявок
@@ -972,7 +965,7 @@ class ApplicationService {
                     : STATUS_LABELS[app.status] || app.status;
 
                 return {
-                    id: app._id,
+                    applicationNumber: app.applicationNumber,
                     date: app.createdAt.toLocaleDateString('ru-RU'),
                     client: app.user?.name || 'Не указан',
                     company: app.company?.name || 'Не указана',
@@ -1001,6 +994,38 @@ class ApplicationService {
         const month = (d.getMonth() + 1).toString().padStart(2, '0');
         const year = d.getFullYear();
         return `${day}/${month}/${year}`;
+    }
+
+    buildFilterQuery(filters) {
+        const query = {};
+
+        if (filters.clients?.length) {
+            query.user = { $in: filters.clients };
+        }
+
+        if (filters.companies?.length) {
+            query.company = { $in: filters.companies };
+        }
+
+        if (filters.sellers?.length) {
+            query.seller = { $in: filters.sellers };
+        }
+
+        if (filters.statuses?.length) {
+            query.status = { $in: filters.statuses };
+        }
+
+        if (filters.dateStart || filters.dateEnd) {
+            query.createdAt = {};
+            if (filters.dateStart) {
+                query.createdAt.$gte = new Date(filters.dateStart);
+            }
+            if (filters.dateEnd) {
+                query.createdAt.$lte = new Date(filters.dateEnd);
+            }
+        }
+
+        return query;
     }
 }
 
