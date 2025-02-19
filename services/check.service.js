@@ -1,4 +1,4 @@
-const Check = require('../models/check.model');
+const {Check} = require('../models/check.model');
 const mongoose = require('mongoose');
 
 class CheckService {

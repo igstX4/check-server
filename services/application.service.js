@@ -1,10 +1,12 @@
-const Application = require('../models/application.model');
+const {Application} = require('../models/application.model');
 const Company = require('../models/company.model');
 const User = require('../models/user.model');
-const Check = require('../models/check.model');
+const {Check, CheckCounter : Counter} = require('../models/check.model');
 const Seller = require('../models/seller.model');
 const History = require('../models/history.model');
 const mongoose = require('mongoose');
+
+
 const Admin = require('../models/admin.model');
 
 class ApplicationService {
@@ -246,7 +248,7 @@ class ApplicationService {
             .populate('company')
             .populate('seller');
     }
-
+    
     async updateApplication(applicationId, adminId, data) {
         try {
             const application = await Application.findById(applicationId);
@@ -263,22 +265,26 @@ class ApplicationService {
     
             // Обрабатываем добавление новых чеков
             if (data.checksToAdd && data.checksToAdd.length > 0) {
-                const newChecks = data.checksToAdd.map(check => {
+                const newChecks = await Promise.all(data.checksToAdd.map( async (check) => {
                     // Преобразуем дату из формата DD/MM/YY в YYYY-MM-DD
                     const [day, month, year] = check.date.split('/');
                     const fullYear = year.length === 2 ? `20${year}` : year;
                     const formattedDate = `${fullYear}-${month}-${day}`;
-
+                    const currentCounter = await Counter.findOneAndUpdate(
+                        { _id: 'checkNumber' },
+                        { $inc: { seq: 1 } },
+                        { new: true }
+                    );
                     return {
                         ...check,
+                        checkNumber: currentCounter.seq,
                         application: applicationId,
                         date: new Date(formattedDate), // теперь дата будет корректно преобразована
                         createdAt: new Date(),
                         updatedAt: new Date()
                     };
-                });
-    
-                await Check.insertMany(newChecks);
+                }));
+                await Check.insertMany(newChecks); // Correctly call insertMany with an array of objects
             }
     
             // Обновляем данные компании
@@ -1029,4 +1035,4 @@ class ApplicationService {
     }
 }
 
-module.exports = new ApplicationService(); 
+module.exports = new ApplicationService();

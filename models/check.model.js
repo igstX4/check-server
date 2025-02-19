@@ -69,4 +69,7 @@ checkSchema.set('toJSON', {
     }
 });
 
-module.exports = mongoose.model('Check', checkSchema); 
+module.exports = {
+    Check: mongoose.model('Check', checkSchema),
+    CheckCounter: CheckCounter
+};

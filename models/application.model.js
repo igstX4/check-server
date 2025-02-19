@@ -168,5 +168,7 @@ applicationSchema.virtual('formattedCommission').get(function() {
         amount: ((this.totalAmount * this.commission) / 100).toFixed(2)
     };
 });
-
-module.exports = mongoose.model('Application', applicationSchema); 
+module.exports = {
+    Application: mongoose.model('Application', applicationSchema),
+    Counter: Counter
+};
