@@ -1,8 +1,8 @@
 const { v4: uuidv4 } = require('uuid');
 const jwt = require('jsonwebtoken');
 const User = require('../models/user.model');
-const Application = require('../models/application.model');
-const Check = require('../models/check.model');
+const {Application} = require('../models/application.model');
+const {Check, CheckCounter : Counter} = require('../models/check.model');
 const mongoose = require('mongoose');
 
 class UserService {
