@@ -1,5 +1,5 @@
 const Company = require('../models/company.model');
-const Application = require('../models/application.model');
+const {Application} = require('../models/application.model');
 const Check = require('../models/check.model');
 const mongoose = require('mongoose');
 const Seller = require('../models/seller.model');
