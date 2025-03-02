@@ -1,7 +1,7 @@
-const {Application} = require('../models/application.model');
+const { Application } = require('../models/application.model');
 const Company = require('../models/company.model');
 const User = require('../models/user.model');
-const {Check, CheckCounter : Counter} = require('../models/check.model');
+const { Check, CheckCounter: Counter } = require('../models/check.model');
 const Seller = require('../models/seller.model');
 const History = require('../models/history.model');
 const mongoose = require('mongoose');
@@ -11,32 +11,45 @@ const Admin = require('../models/admin.model');
 
 const axios = require('axios');
 
-const TELEGRAM_BOT_TOKEN = '7666198160:AAF35lyKhT_OLfwgzAuCCvwpRjMLedXN_jU';
-const CHAT_ID = '-1002399620468'; // ID группы или пользователя
 
-async function sendTelegramMessage(text) {
+
+async function sendTelegramMessage(userName, applicationId, companyName, companyInn, checksCount) {
+    const TELEGRAM_BOT_TOKEN = '7666198160:AAF35lyKhT_OLfwgzAuCCvwpRjMLedXN_jU';
+    const CHAT_ID = '-1002399620468'; // ID группы или пользователя
+    const applicationUrl = `https://checkplatform.ru/admin/application/${applicationId}`;
+
+    const message = `📝 *Новая заявка создана!*  
+📌 *Компания:* ${companyName}  
+🆔 *ИНН:* ${companyInn}  
+👤 *Пользователь:* ${userName}  
+🛒 *Количество чеков:* ${checksCount}  
+
+🔗 [Перейти к заявке](${applicationUrl})`;
+
     const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
 
     try {
         await axios.post(url, {
             chat_id: CHAT_ID,
-            text: text,
-            parse_mode: 'Markdown'
+            text: message,
+            parse_mode: 'Markdown',
+            disable_web_page_preview: true
         });
     } catch (error) {
         console.error('Ошибка при отправке сообщения в Telegram:', error);
     }
 }
 
+
 class ApplicationService {
     async createApplication(data) {
         const { userId, companyName, companyInn, sellerId, shouldSaveCompany, checks } = data;
         const session = await mongoose.startSession();
         session.startTransaction();
-    
+
         try {
             let company = await Company.findOne({ inn: companyInn });
-    
+
             if (company) {
                 if (company.name !== companyName) {
                     throw new Error('Компания с таким ИНН уже существует, но имя не совпадает');
@@ -45,27 +58,27 @@ class ApplicationService {
                 company = new Company({ name: companyName, inn: companyInn });
                 await company.save({ session });
             }
-    
+
             if (shouldSaveCompany) {
                 const user = await User.findById(userId);
                 if (!user) throw new Error('Пользователь не найден');
                 if (!user.canSave) throw new Error('У вас нет прав на сохранение компаний');
-    
+
                 if (!user.savedCompanies.includes(company._id)) {
                     user.savedCompanies.push(company._id);
                     await user.save({ session });
                 }
             }
-    
+
             const application = new Application({
                 user: userId,
                 company: company._id,
                 seller: sellerId,
                 status: ['created']
             });
-    
+
             await application.save({ session });
-    
+
             if (checks && checks.length > 0) {
                 const checksPromises = checks.map(check => {
                     const newCheck = new Check({
@@ -78,25 +91,27 @@ class ApplicationService {
                     });
                     return newCheck.save({ session });
                 });
-    
+
                 await Promise.all(checksPromises);
             }
-    
+
             await application.updateTotals();
             await session.commitTransaction();
-    
+
             const populatedApplication = await Application.findById(application._id)
                 .populate('company')
-                .populate('seller');
-    
+                .populate('seller')
+                .populate('user'); // Добавляем user, чтобы получить name
+
             // 🔹 Отправка уведомления в Telegram  
-            await sendTelegramMessage(`📝 *Новая заявка создана!*  
-    📌 *Компания:* ${company.name}  
-    🆔 *ИНН:* ${company.inn}  
-    👤 *Пользователь:* ${userId}  
-    🛒 *Количество чеков:* ${checks?.length || 0}  
-    🔗 *Статус:* created`);
-    
+            await sendTelegramMessage(
+                populatedApplication.user.name, // Имя пользователя
+                application._id,
+                company.name,
+                company.inn,
+                checks?.length || 0
+            );
+
             return populatedApplication;
         } catch (error) {
             await session.abortTransaction();
@@ -181,20 +196,20 @@ class ApplicationService {
 
             // Фильтруем заявки только по суммам
             const filteredApplications = applications.filter(app => {
-                const appChecks = checks.filter(check => 
+                const appChecks = checks.filter(check =>
                     check.application.toString() === app._id.toString()
                 );
 
                 if (appChecks.length === 0) return false;
 
                 // Вычисляем общую сумму для заявки
-                const totalAmount = appChecks.reduce((sum, check) => 
+                const totalAmount = appChecks.reduce((sum, check) =>
                     sum + (check.quantity * check.pricePerUnit), 0
                 );
 
                 // Проверяем только диапазон сумм
                 return (!filters.sumFrom || totalAmount >= Number(filters.sumFrom)) &&
-                       (!filters.sumTo || totalAmount <= Number(filters.sumTo));
+                    (!filters.sumTo || totalAmount <= Number(filters.sumTo));
             });
 
             // Применяем пагинацию после фильтрации
@@ -205,25 +220,25 @@ class ApplicationService {
 
             // Обогащаем отфильтрованные заявки данными
             const enrichedApplications = paginatedApplications.map(app => {
-                const appChecks = checks.filter(check => 
+                const appChecks = checks.filter(check =>
                     check.application.toString() === app._id.toString()
                 );
-                
+
                 const enrichedApp = app.toJSON();
                 const checkDates = appChecks.map(check => new Date(check.date));
-                
+
                 enrichedApp.date = {
-                    start: checkDates.length ? 
+                    start: checkDates.length ?
                         checkDates.reduce((a, b) => a < b ? a : b).toISOString().split('T')[0] : null,
-                    end: checkDates.length ? 
+                    end: checkDates.length ?
                         checkDates.reduce((a, b) => a > b ? a : b).toISOString().split('T')[0] : null
                 };
 
                 enrichedApp.checksCount = appChecks.length;
-                enrichedApp.totalAmount = appChecks.reduce((sum, check) => 
+                enrichedApp.totalAmount = appChecks.reduce((sum, check) =>
                     sum + (check.quantity * check.pricePerUnit), 0
                 );
-                
+
                 // Добавляем отформатированную дату создания
                 enrichedApp.createdAt = this.formatCreatedAt(app.createdAt);
 
@@ -250,24 +265,24 @@ class ApplicationService {
             .populate('company')
             .populate('seller');
     }
-    
+
     async updateApplication(applicationId, adminId, data) {
         try {
             const application = await Application.findById(applicationId);
             if (!application) {
                 throw new Error('Заявка не найдена');
             }
-    
+
             // Обрабатываем удаление чеков
             if (data.checksToDelete && data.checksToDelete.length > 0) {
                 await Check.deleteMany({
                     _id: { $in: data.checksToDelete }
                 });
             }
-    
+
             // Обрабатываем добавление новых чеков
             if (data.checksToAdd && data.checksToAdd.length > 0) {
-                const newChecks = await Promise.all(data.checksToAdd.map( async (check) => {
+                const newChecks = await Promise.all(data.checksToAdd.map(async (check) => {
                     // Преобразуем дату из формата DD/MM/YY в YYYY-MM-DD
                     const [day, month, year] = check.date.split('/');
                     const fullYear = year.length === 2 ? `20${year}` : year;
@@ -288,7 +303,7 @@ class ApplicationService {
                 }));
                 await Check.insertMany(newChecks); // Correctly call insertMany with an array of objects
             }
-    
+
             // Обновляем данные компании
             if (data.buyer) {
                 let company = await Company.findOne({ inn: data.buyer.inn });
@@ -304,38 +319,38 @@ class ApplicationService {
                 }
                 application.company = company._id;
             }
-    
+
             // Обновляем продавца
             if (data.seller && data.seller.id) {
                 application.seller = data.seller.id;
             }
-    
+
             // Обновляем комиссию
             if (data.commission) {
                 application.commission = parseFloat(data.commission.percentage);
             }
-    
+
             // Сохраняем изменения
             await application.save();
-    
+
             // Добавляем запись в историю
             application.history.push({
                 type: 'change',
                 admin: adminId,
-                message: 'Заявка изменена' + 
+                message: 'Заявка изменена' +
                     (data.checksToDelete?.length ? `. Удалено чеков: ${data.checksToDelete.length}` : '') +
                     (data.checksToAdd?.length ? `. Добавлено чеков: ${data.checksToAdd.length}` : ''),
                 createdAt: new Date()
             });
-    
+
             await application.save();
-    
+
             // Возвращаем обновленную заявку
             const updatedApplication = await Application.findById(applicationId)
                 .populate('seller')
                 .populate('company')
                 .populate('user');
-    
+
             return updatedApplication;
         } catch (error) {
             console.error('Error in updateApplication:', error);
@@ -411,7 +426,7 @@ class ApplicationService {
 
             // Если есть фильтр по статусам, он должен переопределить фильтр activeOnly
             if (filters.statuses?.length && filters.statuses.some(status => status)) {
-                query.status = { 
+                query.status = {
                     $in: filters.statuses.filter(status => status)
                 };
             }
@@ -448,14 +463,14 @@ class ApplicationService {
 
             // Фильтруем заявки только по суммам, убираем фильтрацию по датам чеков
             const filteredApplications = applications.filter(app => {
-                const appChecks = checks.filter(check => 
+                const appChecks = checks.filter(check =>
                     check.application.toString() === app._id.toString()
                 );
 
                 if (appChecks.length === 0) return false;
 
                 // Вычисляем общую сумму для заявки
-                const totalAmount = appChecks.reduce((sum, check) => 
+                const totalAmount = appChecks.reduce((sum, check) =>
                     sum + (check.quantity * check.pricePerUnit), 0
                 );
 
@@ -476,25 +491,25 @@ class ApplicationService {
 
             // Обогащаем отфильтрованные заявки данными
             const enrichedApplications = paginatedApplications.map(app => {
-                const appChecks = checks.filter(check => 
+                const appChecks = checks.filter(check =>
                     check.application.toString() === app._id.toString()
                 );
-                
+
                 const enrichedApp = app.toJSON();
                 const checkDates = appChecks.map(check => new Date(check.date));
-                
+
                 enrichedApp.date = {
-                    start: checkDates.length ? 
+                    start: checkDates.length ?
                         checkDates.reduce((a, b) => a < b ? a : b).toISOString().split('T')[0] : null,
-                    end: checkDates.length ? 
+                    end: checkDates.length ?
                         checkDates.reduce((a, b) => a > b ? a : b).toISOString().split('T')[0] : null
                 };
 
                 enrichedApp.checksCount = appChecks.length;
-                enrichedApp.totalAmount = appChecks.reduce((sum, check) => 
+                enrichedApp.totalAmount = appChecks.reduce((sum, check) =>
                     sum + (check.quantity * check.pricePerUnit), 0
                 );
-                
+
                 // Добавляем отформатированную дату создания
                 enrichedApp.createdAt = this.formatCreatedAt(app.createdAt);
 
@@ -558,14 +573,14 @@ class ApplicationService {
 
             // Фильтруем заявки по датам чеков и суммам
             const filteredApplications = applications.filter(app => {
-                const appChecks = checks.filter(check => 
+                const appChecks = checks.filter(check =>
                     check.application.toString() === app._id.toString()
                 );
 
                 if (appChecks.length === 0) return false;
 
                 // Вычисляем общую сумму для заявки
-                const totalAmount = appChecks.reduce((sum, check) => 
+                const totalAmount = appChecks.reduce((sum, check) =>
                     sum + (check.quantity * check.pricePerUnit), 0
                 );
 
@@ -585,22 +600,22 @@ class ApplicationService {
                     const filterStartDate = filters.dateStart ? new Date(filters.dateStart) : null;
                     const filterEndDate = filters.dateEnd ? new Date(filters.dateEnd) : null;
 
-                    isInDateRange = (!filterStartDate || appEndDate >= filterStartDate) && 
-                                   (!filterEndDate || appStartDate <= filterEndDate);
+                    isInDateRange = (!filterStartDate || appEndDate >= filterStartDate) &&
+                        (!filterEndDate || appStartDate <= filterEndDate);
                 }
 
                 // Проверяем остальные фильтры
-                const isStatusMatch = !filters.statuses?.length || 
+                const isStatusMatch = !filters.statuses?.length ||
                     filters.statuses.some(status => app.status.includes(status));
-                
-                const isSellerMatch = !filters.sellers?.length || 
+
+                const isSellerMatch = !filters.sellers?.length ||
                     filters.sellers.includes(app.seller._id.toString());
-                
-                const isClientMatch = !filters.clients?.length || 
+
+                const isClientMatch = !filters.clients?.length ||
                     filters.clients.includes(app.user._id.toString());
 
-                return isInSumRange && isInDateRange && isStatusMatch && 
-                       isSellerMatch && isClientMatch;
+                return isInSumRange && isInDateRange && isStatusMatch &&
+                    isSellerMatch && isClientMatch;
             });
 
             // Применяем пагинацию после фильтрации
@@ -611,12 +626,12 @@ class ApplicationService {
 
             // Обогащаем отфильтрованные заявки данными
             const enrichedApplications = paginatedApplications.map(app => {
-                const appChecks = checks.filter(check => 
+                const appChecks = checks.filter(check =>
                     check.application.toString() === app._id.toString()
                 );
-                
+
                 const checkDates = appChecks.map(check => new Date(check.date));
-                
+
                 return {
                     id: app._id,
                     status: app.status,
@@ -631,13 +646,13 @@ class ApplicationService {
                         inn: app.seller.inn
                     },
                     checksCount: appChecks.length,
-                    totalAmount: appChecks.reduce((sum, check) => 
+                    totalAmount: appChecks.reduce((sum, check) =>
                         sum + (check.quantity * check.pricePerUnit), 0
                     ),
                     date: {
-                        start: checkDates.length ? 
+                        start: checkDates.length ?
                             checkDates.reduce((a, b) => a < b ? a : b).toISOString().split('T')[0] : null,
-                        end: checkDates.length ? 
+                        end: checkDates.length ?
                             checkDates.reduce((a, b) => a > b ? a : b).toISOString().split('T')[0] : null
                     },
                     user: {
@@ -916,7 +931,7 @@ class ApplicationService {
 
     async getActiveApplicationsCount() {
         try {
-            const count = await Application.countDocuments({ 
+            const count = await Application.countDocuments({
                 status: { $not: { $all: ['us_paid'] } }
             });
             return { success: true, count };
@@ -963,12 +978,12 @@ class ApplicationService {
 
             const formattedData = applications.map(app => {
                 const applicationChecks = checksMap[app._id.toString()] || [];
-                const totalSum = applicationChecks.reduce((sum, check) => 
+                const totalSum = applicationChecks.reduce((sum, check) =>
                     sum + (check.quantity * check.pricePerUnit), 0
                 );
 
                 // Переводим статусы
-                const translatedStatuses = Array.isArray(app.status) 
+                const translatedStatuses = Array.isArray(app.status)
                     ? app.status.map(status => STATUS_LABELS[status] || status).join(', ')
                     : STATUS_LABELS[app.status] || app.status;
 
