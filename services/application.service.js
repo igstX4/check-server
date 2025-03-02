@@ -9,67 +9,64 @@ const mongoose = require('mongoose');
 
 const Admin = require('../models/admin.model');
 
+const axios = require('axios');
+
+const TELEGRAM_BOT_TOKEN = '7666198160:AAF35lyKhT_OLfwgzAuCCvwpRjMLedXN_jU';
+const CHAT_ID = '-1002399620468'; // ID группы или пользователя
+
+async function sendTelegramMessage(text) {
+    const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
+
+    try {
+        await axios.post(url, {
+            chat_id: CHAT_ID,
+            text: text,
+            parse_mode: 'Markdown'
+        });
+    } catch (error) {
+        console.error('Ошибка при отправке сообщения в Telegram:', error);
+    }
+}
+
 class ApplicationService {
     async createApplication(data) {
-        const { 
-            userId, 
-            companyName, 
-            companyInn, 
-            sellerId, 
-            shouldSaveCompany,
-            checks
-        } = data;
-
-        // Создаем транзакцию
+        const { userId, companyName, companyInn, sellerId, shouldSaveCompany, checks } = data;
         const session = await mongoose.startSession();
         session.startTransaction();
-
+    
         try {
-            // Проверяем существование компании по ИНН
             let company = await Company.findOne({ inn: companyInn });
-            
+    
             if (company) {
                 if (company.name !== companyName) {
                     throw new Error('Компания с таким ИНН уже существует, но имя не совпадает');
                 }
             } else {
-                company = new Company({
-                    name: companyName,
-                    inn: companyInn
-                });
+                company = new Company({ name: companyName, inn: companyInn });
                 await company.save({ session });
             }
-
-            // Если пользователь хочет сохранить компанию
+    
             if (shouldSaveCompany) {
                 const user = await User.findById(userId);
-                if (!user) {
-                    throw new Error('Пользователь не найден');
-                }
-
-                if (!user.canSave) {
-                    throw new Error('У вас нет прав на сохранение компаний');
-                }
-                
+                if (!user) throw new Error('Пользователь не найден');
+                if (!user.canSave) throw new Error('У вас нет прав на сохранение компаний');
+    
                 if (!user.savedCompanies.includes(company._id)) {
                     user.savedCompanies.push(company._id);
                     await user.save({ session });
                 }
             }
-
-            // Создаем заявку
+    
             const application = new Application({
                 user: userId,
                 company: company._id,
                 seller: sellerId,
                 status: ['created']
             });
-
+    
             await application.save({ session });
-
-            // Создаем чеки
+    
             if (checks && checks.length > 0) {
-                // Создаем чеки по одному, чтобы сработал middleware
                 const checksPromises = checks.map(check => {
                     const newCheck = new Check({
                         application: application._id,
@@ -79,22 +76,27 @@ class ApplicationService {
                         pricePerUnit: check.pricePerUnit,
                         unit: check.unit
                     });
-                    return newCheck.save({ session }); // Сохраняем с сессией
+                    return newCheck.save({ session });
                 });
-
+    
                 await Promise.all(checksPromises);
             }
-
-            // Обновляем общую сумму и количество чеков в заявке
+    
             await application.updateTotals();
-
             await session.commitTransaction();
-            
-            // Получаем полную информацию о заявке с чеками
+    
             const populatedApplication = await Application.findById(application._id)
                 .populate('company')
                 .populate('seller');
-
+    
+            // 🔹 Отправка уведомления в Telegram  
+            await sendTelegramMessage(`📝 *Новая заявка создана!*  
+    📌 *Компания:* ${company.name}  
+    🆔 *ИНН:* ${company.inn}  
+    👤 *Пользователь:* ${userId}  
+    🛒 *Количество чеков:* ${checks?.length || 0}  
+    🔗 *Статус:* created`);
+    
             return populatedApplication;
         } catch (error) {
             await session.abortTransaction();
