@@ -15,7 +15,7 @@ const axios = require('axios');
 
 async function sendTelegramMessage(userName, applicationId, companyName, companyInn, checksCount) {
     const TELEGRAM_BOT_TOKEN = '7666198160:AAF35lyKhT_OLfwgzAuCCvwpRjMLedXN_jU';
-    const CHAT_ID = '-1002399620468'; // ID группы или пользователя
+    const CHAT_ID = '-1002148310973'; // ID группы или пользователя
     const applicationUrl = `https://checkplatform.ru/admin/application/${applicationId}`;
 
     const message = `📝 *Новая заявка создана!*  
