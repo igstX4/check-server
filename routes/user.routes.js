@@ -8,12 +8,12 @@ const applicationService = require('../services/application.service');
 // Регистрация пользователя (только для админов)
 router.post('/register', adminAuth, async (req, res) => {
     try {
-        const { name } = req.body;
+        const { name, canSave } = req.body;
         if (!name) {
             return res.status(400).json({ message: 'Имя обязательно' });
         }
         
-        const user = await userService.register(name);
+        const user = await userService.register(name, canSave);
         res.status(201).json(user);
     } catch (error) {
         res.status(400).json({ message: error.message });

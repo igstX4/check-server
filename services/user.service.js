@@ -7,6 +7,7 @@ const mongoose = require('mongoose');
 
 class UserService {
   async register(name, canSave = false) {
+
     const existingUser = await User.findOne({ name });
     if (existingUser) {
       throw new Error('Пользователь с таким именем уже существует');
